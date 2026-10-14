@@ -47,7 +47,18 @@
             z-index: 10;
             box-sizing: border-box;
             box-shadow: 5px 0 25px rgba(0,0,0,0.5);
+            transition: transform 0.3s ease;
         }
+
+        #ui-layer.collapsed { transform: translateX(-320px); }
+
+        #menu-toggle {
+            position: fixed; top: 12px; right: 12px; z-index: 20;
+            background: var(--panel); border: 1px solid var(--panel-border); color: var(--accent);
+            font-family: 'Rajdhani', sans-serif; font-weight: bold; letter-spacing: 1px;
+            padding: 6px 12px; border-radius: 6px; cursor: pointer;
+        }
+        #menu-toggle:hover { background: var(--accent); color: #000; }
 
         .header-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; }
         
@@ -239,6 +250,7 @@
     </div>
 
     <div id="canvas-container"></div>
+    <button id="menu-toggle" onclick="toggleSidebar()">MENU</button>
 
     <script>
         let scene, camera, renderer, controls, raycaster, mouse;
@@ -252,6 +264,7 @@
         let isSimulating = false;
         let isExporting = false;
         let droneGroup, flightLine, arrowGroup, flightCurve, animationT = 0;
+        let longPressTimer = null, pressStart = { x: 0, y: 0 }, touchTapTarget = null, didLongPress = false;
         
         const STEP = 0.6; 
         const POINTS_X = 7; 
@@ -303,11 +316,11 @@
             scene.background = new THREE.Color(0x050508);
             scene.fog = new THREE.FogExp2(0x050508, 0.04); // Leichter Nebel für Tiefe
 
-            camera = new THREE.PerspectiveCamera(45, (window.innerWidth - 300) / window.innerHeight, 0.1, 1000);
+            camera = new THREE.PerspectiveCamera(45, (window.innerWidth - sidebarWidth()) / window.innerHeight, 0.1, 1000);
             camera.position.set(6, 6, 6);
 
             renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
-            renderer.setSize(window.innerWidth - 300, window.innerHeight);
+            renderer.setSize(window.innerWidth - sidebarWidth(), window.innerHeight);
             renderer.setPixelRatio(window.devicePixelRatio);
             document.getElementById('canvas-container').appendChild(renderer.domElement);
 
@@ -352,8 +365,13 @@
 
             renderer.domElement.addEventListener('pointerdown', onPointerDown);
             renderer.domElement.addEventListener('pointermove', onPointerMove);
+            renderer.domElement.addEventListener('pointerup', onPointerUp);
+            renderer.domElement.addEventListener('pointercancel', onPointerUp);
             renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
             window.addEventListener('resize', onWindowResize);
+
+            // Auf schmalen Bildschirmen ist die Sidebar zunächst eingeklappt
+            if (window.innerWidth <= 768) document.getElementById('ui-layer').classList.add('collapsed');
             
             // Initial Translation
             applyTranslations();
@@ -749,34 +767,74 @@
             raycaster.setFromCamera(mouse, camera);
             const targets = currentMode === 'construct' ? ghostPoles.filter(p => p.isSelectable) : (currentMode === 'flight' ? flightPlanes.filter(p => p.isSelectable) : []);
             const intersects = raycaster.intersectObjects(targets);
-            
-            if (intersects.length > 0) {
-                const obj = intersects[0].object;
-                if (obj.isFlightPlane) {
-                    if (event.button === 2) { 
-                        if (obj.isActive) {
-                            obj.isActive = false;
-                            activePlanes = activePlanes.filter(p => p !== obj);
-                        }
-                    } else { 
-                        if (!obj.isActive) {
-                            obj.isActive = true;
-                            activePlanes.push(obj);
-                        } else {
-                            obj.isInverted = !obj.isInverted;
-                        }
-                    }
-                } else if (event.button === 0) {
-                    obj.isActive = !obj.isActive;
-                    if (obj.isActive) activePoles.push(obj);
-                    else activePoles = activePoles.filter(p => p !== obj);
+
+            if (intersects.length === 0) return;
+            const obj = intersects[0].object;
+
+            // Touch im Flug-Modus: Tap = setzen/invertieren (bei pointerup),
+            // langes Drücken (600ms) = Tor entfernen (Ersatz für Rechts-Klick)
+            if (event.pointerType === 'touch' && obj.isFlightPlane) {
+                pressStart = { x: event.clientX, y: event.clientY };
+                touchTapTarget = obj;
+                didLongPress = false;
+                if (obj.isActive) {
+                    longPressTimer = setTimeout(() => {
+                        longPressTimer = null;
+                        didLongPress = true;
+                        touchTapTarget = null;
+                        obj.isActive = false;
+                        activePlanes = activePlanes.filter(p => p !== obj);
+                        updateVisibility();
+                        createFlightPathVisuals();
+                    }, 600);
                 }
-                updateVisibility(); // Setzt Farben hart zurück
-                createFlightPathVisuals();
+                return;
             }
+
+            applyPointerAction(obj, event.button);
+        }
+
+        function applyPointerAction(obj, button) {
+            if (obj.isFlightPlane) {
+                if (button === 2) {
+                    if (obj.isActive) {
+                        obj.isActive = false;
+                        activePlanes = activePlanes.filter(p => p !== obj);
+                    }
+                } else {
+                    if (!obj.isActive) {
+                        obj.isActive = true;
+                        activePlanes.push(obj);
+                    } else {
+                        obj.isInverted = !obj.isInverted;
+                    }
+                }
+            } else if (button === 0) {
+                obj.isActive = !obj.isActive;
+                if (obj.isActive) activePoles.push(obj);
+                else activePoles = activePoles.filter(p => p !== obj);
+            } else {
+                return;
+            }
+            updateVisibility(); // Setzt Farben hart zurück
+            createFlightPathVisuals();
+        }
+
+        function onPointerUp() {
+            if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+            if (touchTapTarget && !didLongPress) {
+                applyPointerAction(touchTapTarget, 0);
+            }
+            touchTapTarget = null;
         }
 
         function onPointerMove(event) {
+            // Langes Drücken abbrechen, wenn der Finger bewegt wird (Kamera-Drag)
+            if (longPressTimer && Math.hypot(event.clientX - pressStart.x, event.clientY - pressStart.y) > 12) {
+                clearTimeout(longPressTimer);
+                longPressTimer = null;
+                touchTapTarget = null;
+            }
             updateMouse(event);
             raycaster.setFromCamera(mouse, camera);
             const targets = currentMode === 'construct' ? ghostPoles.filter(p => p.isSelectable) : flightPlanes.filter(p => p.isSelectable);
@@ -803,9 +861,18 @@
         }
 
         function onWindowResize() {
-            camera.aspect = (window.innerWidth - 300) / window.innerHeight;
+            camera.aspect = (window.innerWidth - sidebarWidth()) / window.innerHeight;
             camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth - 300, window.innerHeight);
+            renderer.setSize(window.innerWidth - sidebarWidth(), window.innerHeight);
+        }
+
+        function sidebarWidth() {
+            return document.getElementById('ui-layer').classList.contains('collapsed') ? 0 : 300;
+        }
+
+        function toggleSidebar() {
+            document.getElementById('ui-layer').classList.toggle('collapsed');
+            onWindowResize();
         }
 
         function resetAll() {
