@@ -231,6 +231,7 @@
         <div class="btn-row">
             <button class="main-btn secondary-btn" id="btn-export" onclick="exportData()">Export</button>
             <button class="main-btn secondary-btn" id="btn-import" onclick="document.getElementById('file-input').click()">Import</button>
+            <button class="main-btn secondary-btn" id="btn-undo" onclick="undo()">Rückgängig</button>
             <button class="main-btn secondary-btn" id="btn-privacy" onclick="togglePrivacy()">Privacy</button>
         </div>
 
@@ -269,6 +270,8 @@
         let isSimulating = false;
         let isExporting = false;
         let droneGroup, flightLine, arrowGroup, flightCurve, animationT = 0;
+        let undoStack = [];
+        const UNDO_LIMIT = 50;
         
         const STEP = 0.6; 
         const POINTS_X = 7; 
@@ -285,7 +288,7 @@
                 ready: "Klicke auf Linien, um das Gerüst zu bauen.",
                 stats: "Stangen: {p}<br>Tore: {f}",
                 start: "Start", stop: "Stop", next: "Nächstes Tor",
-                export: "Export", import: "Import", reset: "Alles Löschen", privacy: "Datenschutz",
+                export: "Export", import: "Import", reset: "Alles Löschen", privacy: "Datenschutz", undo: "Rückgängig",
                 speed: "Fluggeschwindigkeit",
                 gate: "Tor", startGate: "Start",
                 flightModeInfo: "<b>Links-Klick:</b> Tor setzen / umkehren<br><b>Rechts-Klick:</b> Tor entfernen",
@@ -302,7 +305,7 @@
                 ready: "Click on lines to build the structure.",
                 stats: "Poles: {p}<br>Gates: {f}",
                 start: "Start", stop: "Stop", next: "Next Gate",
-                export: "Export", import: "Import", reset: "Clear All", privacy: "Privacy",
+                export: "Export", import: "Import", reset: "Clear All", privacy: "Privacy", undo: "Undo",
                 speed: "Flight Speed",
                 gate: "Gate", startGate: "Start",
                 flightModeInfo: "<b>Left-Click:</b> Place / Invert Gate<br><b>Right-Click:</b> Remove Gate",
@@ -375,6 +378,12 @@
             renderer.domElement.addEventListener('pointermove', onPointerMove);
             renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
             window.addEventListener('resize', onWindowResize);
+            window.addEventListener('keydown', (e) => {
+                if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+                    e.preventDefault();
+                    undo();
+                }
+            });
             
             // Initial Translation
             applyTranslations();
@@ -401,6 +410,7 @@
             
             document.getElementById('btn-export').innerText = t.export;
             document.getElementById('btn-import').innerText = t.import;
+            document.getElementById('btn-undo').innerText = t.undo;
             document.getElementById('btn-reset').innerText = t.reset;
             document.getElementById('btn-privacy').innerText = t.privacy;
             document.getElementById('next-btn').innerText = t.next;
@@ -814,20 +824,25 @@
                     if (event.button === 2) { 
                         if (obj.isActive) {
                             obj.isActive = false;
+                            const idx = activePlanes.indexOf(obj);
                             activePlanes = activePlanes.filter(p => p !== obj);
+                            pushUndo({ type: 'plane-removed', obj: obj, index: idx });
                         }
                     } else { 
                         if (!obj.isActive) {
                             obj.isActive = true;
                             activePlanes.push(obj);
+                            pushUndo({ type: 'plane-added', obj: obj });
                         } else {
                             obj.isInverted = !obj.isInverted;
+                            pushUndo({ type: 'plane-inverted', obj: obj });
                         }
                     }
                 } else if (event.button === 0) {
                     obj.isActive = !obj.isActive;
                     if (obj.isActive) activePoles.push(obj);
                     else activePoles = activePoles.filter(p => p !== obj);
+                    pushUndo({ type: 'pole-toggled', obj: obj });
                 }
                 updateVisibility(); // Setzt Farben hart zurück
                 createFlightPathVisuals();
@@ -868,6 +883,10 @@
         }
 
         function resetAll() {
+            if (activePoles.length > 0 || activePlanes.length > 0) {
+                // Zustand sichern, damit Zurücksetzen rückgängig gemacht werden kann
+                pushUndo({ type: 'snapshot', poles: [...activePoles], planes: [...activePlanes] });
+            }
             isSimulating = false;
             animationT = 0;
             activePoles = []; activePlanes = [];
@@ -924,6 +943,43 @@
             });
             updateVisibility();
             createFlightPathVisuals();
+        }
+
+        function pushUndo(action) {
+            undoStack.push(action);
+            if (undoStack.length > UNDO_LIMIT) undoStack.shift();
+        }
+
+        function undo() {
+            const action = undoStack.pop();
+            if (!action) return;
+            switch (action.type) {
+                case 'pole-toggled':
+                    action.obj.isActive = !action.obj.isActive;
+                    if (action.obj.isActive) activePoles.push(action.obj);
+                    else activePoles = activePoles.filter(p => p !== action.obj);
+                    break;
+                case 'plane-added':
+                    action.obj.isActive = false;
+                    activePlanes = activePlanes.filter(p => p !== action.obj);
+                    break;
+                case 'plane-removed':
+                    action.obj.isActive = true;
+                    activePlanes.splice(Math.min(action.index, activePlanes.length), 0, action.obj);
+                    break;
+                case 'plane-inverted':
+                    action.obj.isInverted = !action.obj.isInverted;
+                    break;
+                case 'snapshot':
+                    activePoles = []; activePlanes = [];
+                    ghostPoles.forEach(p => p.isActive = false);
+                    flightPlanes.forEach(f => { f.isActive = false; f.isInverted = false; });
+                    action.poles.forEach(p => { p.isActive = true; activePoles.push(p); });
+                    action.planes.forEach(p => { p.isActive = true; activePlanes.push(p); });
+                    break;
+            }
+            createFlightPathVisuals();
+            updateVisibility();
         }
 
         function animate() {
