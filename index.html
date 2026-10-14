@@ -639,6 +639,7 @@
             [activePlanes[index], activePlanes[target]] = [activePlanes[target], activePlanes[index]];
             createFlightPathVisuals();
             updateVisibility();
+            saveState();
         }
 
         function createFlightPathVisuals() {
@@ -980,6 +981,7 @@
             }
             createFlightPathVisuals();
             updateVisibility();
+            saveState();
         }
 
         function animate() {
