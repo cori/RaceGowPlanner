@@ -120,6 +120,21 @@
             background: rgba(0,0,0,0.3); border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);
         }
 
+        #gate-list { margin-bottom: 15px; max-height: 200px; overflow-y: auto; }
+        .gate-row {
+            display: flex; align-items: center; gap: 6px; padding: 4px 8px; margin-bottom: 4px;
+            background: rgba(0,0,0,0.3); border-radius: 6px; border: 1px solid rgba(255,255,255,0.05);
+            font-family: 'Rajdhani', sans-serif; font-size: 0.9rem; color: #ccc;
+        }
+        .gate-row.start-gate { border-color: var(--start); color: var(--start); }
+        .gate-row .gate-name { flex: 1; }
+        .gate-move-btn {
+            background: rgba(255,255,255,0.1); color: #fff; border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 4px; cursor: pointer; padding: 2px 8px; font-size: 0.75rem; transition: 0.2s;
+        }
+        .gate-move-btn:hover:not(:disabled) { background: var(--accent); color: #000; }
+        .gate-move-btn:disabled { opacity: 0.25; cursor: default; }
+
         .btn-row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
 
         .main-btn {
@@ -205,6 +220,8 @@
             Stangen: 0<br>Tore: 0
         </div>
 
+        <div id="gate-list" style="display: none;"></div>
+
         <div class="btn-row" id="playback-controls" style="display: none;">
             <button class="main-btn" id="sim-btn" onclick="toggleSimulation()">Start</button>
             <button class="main-btn secondary-btn" id="next-btn" onclick="nextSection()">Next</button>
@@ -270,6 +287,7 @@
                 start: "Start", stop: "Stop", next: "Nächstes Tor",
                 export: "Export", import: "Import", reset: "Alles Löschen", privacy: "Datenschutz",
                 speed: "Fluggeschwindigkeit",
+                gate: "Tor", startGate: "Start",
                 flightModeInfo: "<b>Links-Klick:</b> Tor setzen / umkehren<br><b>Rechts-Klick:</b> Tor entfernen",
                 loading: "Render GIF...",
                 modalTitle: "Datenschutzhinweise",
@@ -286,6 +304,7 @@
                 start: "Start", stop: "Stop", next: "Next Gate",
                 export: "Export", import: "Import", reset: "Clear All", privacy: "Privacy",
                 speed: "Flight Speed",
+                gate: "Gate", startGate: "Start",
                 flightModeInfo: "<b>Left-Click:</b> Place / Invert Gate<br><b>Right-Click:</b> Remove Gate",
                 loading: "Rendering GIF...",
                 modalTitle: "Privacy Policy",
@@ -573,6 +592,43 @@
             // Update Stats text dynamically based on language
             const t = TRANSLATIONS[currentLang];
             document.getElementById('stats-display').innerHTML = t.stats.replace('{p}', activePoles.length).replace('{f}', activePlanes.length);
+
+            renderGateList();
+        }
+
+        function renderGateList() {
+            const el = document.getElementById('gate-list');
+            if (activePlanes.length < 2 || currentMode === 'construct') {
+                el.style.display = 'none';
+                el.dataset.sig = '';
+                return;
+            }
+            const t = TRANSLATIONS[currentLang];
+            // Reihenfolge-Änderungen ändern nur die 3D-Szene; die Zeilen sind
+            // positionsbasiert, daher reicht count|mode|lang als Signatur
+            const sig = activePlanes.length + '|' + currentMode + '|' + currentLang;
+            el.style.display = 'block';
+            if (el.dataset.sig === sig) return;
+            el.dataset.sig = sig;
+            let html = '';
+            activePlanes.forEach((p, i) => {
+                const isStart = i === 0;
+                const label = isStart ? `${i + 1}. ${t.gate} (${t.startGate})` : `${i + 1}. ${t.gate}`;
+                html += `<div class="gate-row${isStart ? ' start-gate' : ''}">` +
+                    `<span class="gate-name">${label}</span>` +
+                    `<button class="gate-move-btn" onclick="moveGate(${i}, -1)" ${i === 0 ? 'disabled' : ''}>&#9650;</button>` +
+                    `<button class="gate-move-btn" onclick="moveGate(${i}, 1)" ${i === activePlanes.length - 1 ? 'disabled' : ''}>&#9660;</button>` +
+                    `</div>`;
+            });
+            el.innerHTML = html;
+        }
+
+        function moveGate(index, delta) {
+            const target = index + delta;
+            if (target < 0 || target >= activePlanes.length) return;
+            [activePlanes[index], activePlanes[target]] = [activePlanes[target], activePlanes[index]];
+            createFlightPathVisuals();
+            updateVisibility();
         }
 
         function createFlightPathVisuals() {
