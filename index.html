@@ -255,9 +255,10 @@
         
         const STEP = 0.6; 
         const POINTS_X = 7; 
-        const POINTS_Z = 7;
+        const POINTS_Z = 7; 
         const POINTS_Y = 5; 
         const POLE_RADIUS = 0.025; // Etwas dünner für sportlicheren Look
+        const STORAGE_KEY = 'racegow_track_autosave';
 
         // Übersetzungstabelle (Vollständig)
         const TRANSLATIONS = {
@@ -345,6 +346,7 @@
 
             generateGhostSkeleton();
             generateFlightPlanes();
+            loadState();
             updateVisibility();
 
             raycaster = new THREE.Raycaster();
@@ -773,6 +775,7 @@
                 }
                 updateVisibility(); // Setzt Farben hart zurück
                 createFlightPathVisuals();
+                saveState();
             }
         }
 
@@ -816,6 +819,55 @@
             flightPlanes.forEach(f => { f.isActive = false; f.isInverted = false; });
             createFlightPathVisuals();
             updateVisibility();
+            saveState();
+        }
+
+        function serializeState() {
+            return {
+                poles: activePoles.map(p => ({ s: { x: p.startPos.x, y: p.startPos.y, z: p.startPos.z }, e: { x: p.endPos.x, y: p.endPos.y, z: p.endPos.z } })),
+                planes: activePlanes.map(p => ({ pos: { x: p.position.x, y: p.position.y, z: p.position.z }, type: p.orientationType, inv: p.isInverted }))
+            };
+        }
+
+        function saveState() {
+            try {
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(serializeState()));
+            } catch (err) {
+                console.error("Autosave fehlgeschlagen:", err);
+            }
+        }
+
+        function loadState() {
+            try {
+                const raw = localStorage.getItem(STORAGE_KEY);
+                if (!raw) return;
+                applyTrackData(JSON.parse(raw));
+            } catch (err) {
+                console.error("Autosave laden fehlgeschlagen:", err);
+            }
+        }
+
+        function applyTrackData(data) {
+            data.poles.forEach(item => {
+                const match = ghostPoles.find(gp =>
+                    gp.startPos.distanceTo(new THREE.Vector3(item.s.x, item.s.y, item.s.z)) < 0.001 &&
+                    gp.endPos.distanceTo(new THREE.Vector3(item.e.x, item.e.y, item.e.z)) < 0.001
+                );
+                if(match) { match.isActive = true; activePoles.push(match); }
+            });
+            data.planes.forEach(item => {
+                const match = flightPlanes.find(fp =>
+                    fp.position.distanceTo(new THREE.Vector3(item.pos.x, item.pos.y, item.pos.z)) < 0.001 &&
+                    fp.orientationType === item.type
+                );
+                if(match) {
+                    match.isActive = true;
+                    match.isInverted = item.inv || false;
+                    activePlanes.push(match);
+                }
+            });
+            updateVisibility();
+            createFlightPathVisuals();
         }
 
         function animate() {
@@ -862,11 +914,7 @@
         }
 
         function exportData() {
-            const data = { 
-                poles: activePoles.map(p => ({ s: p.startPos, e: p.endPos })), 
-                planes: activePlanes.map(p => ({ pos: p.position, type: p.orientationType, inv: p.isInverted })) 
-            };
-            const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+            const blob = new Blob([JSON.stringify(serializeState())], { type: 'application/json' });
             const a = document.createElement('a');
             a.href = URL.createObjectURL(blob);
             a.download = `racegow_track.json`; a.click();
@@ -880,26 +928,8 @@
                 try {
                     const data = JSON.parse(e.target.result);
                     resetAll();
-                    data.poles.forEach(item => {
-                        const match = ghostPoles.find(gp => 
-                            gp.startPos.distanceTo(new THREE.Vector3(item.s.x, item.s.y, item.s.z)) < 0.001 && 
-                            gp.endPos.distanceTo(new THREE.Vector3(item.e.x, item.e.y, item.e.z)) < 0.001
-                        );
-                        if(match) { match.isActive = true; activePoles.push(match); }
-                    });
-                    data.planes.forEach(item => {
-                        const match = flightPlanes.find(fp => 
-                            fp.position.distanceTo(new THREE.Vector3(item.pos.x, item.pos.y, item.pos.z)) < 0.001 && 
-                            fp.orientationType === item.type
-                        );
-                        if(match) { 
-                            match.isActive = true; 
-                            match.isInverted = item.inv || false; 
-                            activePlanes.push(match); 
-                        }
-                    });
-                    updateVisibility();
-                    createFlightPathVisuals();
+                    applyTrackData(data);
+                    saveState();
                 } catch(err) {
                     console.error("Import fehlgeschlagen:", err);
                 }
