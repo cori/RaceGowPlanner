@@ -787,6 +787,10 @@
 
             const totalFrames = 120; 
             const step = 1 / totalFrames;
+            // Frame-Delay an die Simulationsgeschwindigkeit anpassen (60 FPS Referenz),
+            // damit das GIF genau so schnell abspielt wie die Live-Animation
+            const simSpeed = parseFloat(document.getElementById('speed-range').value);
+            const frameDelay = Math.max(20, Math.round(1000 / (60 * simSpeed * totalFrames)));
 
             for (let i = 0; i < totalFrames; i++) {
                 animationT = i * step;
@@ -798,7 +802,7 @@
                 }
                 
                 renderer.render(scene, camera);
-                gif.addFrame(renderer.domElement, { copy: true, delay: 100 });
+                gif.addFrame(renderer.domElement, { copy: true, delay: frameDelay });
                 pBar.style.width = (i / totalFrames * 50) + '%';
                 await new Promise(r => setTimeout(r, 5));
             }
